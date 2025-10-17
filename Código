@@ -217,12 +217,95 @@ const MASTER_SHEET_NAME = 'Orders';
 const TARGET_SPREADSHEET_ID = MASTER_SPREADSHEET_ID; // <-- archivo "Inventario Zirconia"
 const TARGET_SHEET_NAME = 'Historial';             // hoja destino dentro de Inventario Zirconia
 
+/***** === DEDUP + REPAIR GUARD (no tocar nombres) === *****/
+const ORDER_ID_HEADER_CANDIDATES = ['ID', 'ID Orden', 'Id Orden', 'ID de orden', 'Orden', 'Order', 'ORD'];
+const DISK_HEADER_CANDIDATES     = ['Disco', 'Disco/Modelo', 'Producto', 'Trabajo'];
+const REPAIR_FLAG_HEADER_CANDIDATES = ['rep x. unidad', 'Rep x. unidad', 'Rep x Unidad', 'RepXUnidad', 'Rep por unidad'];
+
+function _findHeaderIndex_(headers, candidates) {
+  const lower = headers.map(h => String(h || '').trim().toLowerCase());
+  for (const cand of candidates) {
+    const i = lower.indexOf(String(cand).toLowerCase());
+    if (i !== -1) return i;
+  }
+  throw new Error('No se encontró alguna de las cabeceras: ' + candidates.join(', '));
+}
+
+function _normalizeBool_(v) {
+  if (typeof v === 'boolean') return v;
+  if (v == null) return false;
+  const s = String(v).trim().toLowerCase();
+  return s === 'true' || s === 'sí' || s === 'si' || s === '1' || s === 'x';
+}
+
+function _historyKey_(orderId, disco) {
+  return (String(orderId).trim() + '||' + String(disco).trim()).toLowerCase();
+}
+
+function existsInHistory_(histSheet, orderId, disco) {
+  if (!orderId || !disco) return false;
+  const rng = histSheet.getDataRange().getDisplayValues();
+  if (rng.length <= 1) return false; // solo cabecera
+
+  const headers = rng[0];
+  const idIdx   = _findHeaderIndex_(headers, ORDER_ID_HEADER_CANDIDATES);
+  const discIdx = _findHeaderIndex_(headers, DISK_HEADER_CANDIDATES);
+  const wanted  = _historyKey_(orderId, disco);
+
+  for (let r = 1; r < rng.length; r++) {
+    const k = _historyKey_(rng[r][idIdx], rng[r][discIdx]);
+    if (k === wanted) return true;
+  }
+  return false;
+}
+
+/**
+ * Devuelve true si se puede insertar (nuevo o reparación).
+ * Si es duplicado y NO es reparación, muestra toast y devuelve false.
+ */
+function guardDuplicateOrRepair_(histSheet, orderId, disco, isRepair) {
+  const duplicated = existsInHistory_(histSheet, orderId, disco);
+  if (duplicated && !isRepair) {
+    SpreadsheetApp.getActive().toast('La orden ya está registrada, por favor verifique', 'Duplicado', 5);
+    return false;
+  }
+  return true;
+}
+
+/** Pinta de naranja la última fila agregada al Historial (reparación). */
+function colorLastRowIfRepair_(histSheet) {
+  const lastRow = histSheet.getLastRow();
+  const lastCol = histSheet.getLastColumn();
+  if (lastRow >= 2 && lastCol >= 1) {
+    histSheet.getRange(lastRow, 1, 1, lastCol).setBackground('#FCE5CD'); // naranja suave
+  }
+}
+
 /**
  * Copia el registro del día al Historial.
  * Toma la fecha de R2 y la coloca en la columna A (Fecha) de cada fila pegada.
  * Omite la columna "Puente" (J) del origen porque no existe en Historial.
  * Colorea la primera fila pegada para separar días.
  */
+
+function enviarFilaAlHistorial_(sourceSheet, rowNumber, params) {
+  params = params || {};
+  const histSheet = params.histSheet;
+  const rowValues = params.rowValues;
+  const orderId = params.orderId;
+  const disco = params.disco;
+  const isRepair = params.isRepair === true;
+
+  if (!histSheet) throw new Error('No existe la hoja Historial');
+  if (!rowValues) throw new Error('No hay datos para insertar');
+
+  if (!guardDuplicateOrRepair_(histSheet, orderId, disco, isRepair)) {
+    return false;
+  }
+
+  histSheet.appendRow(rowValues);
+  return true;
+}
 
 function moverRegistroAHistorial() {
   const ss = SpreadsheetApp.getActive();
@@ -232,55 +315,90 @@ function moverRegistroAHistorial() {
   const fecha = src.getRange('R1').getValue();
   if (!fecha) throw new Error('La celda R2 no tiene fecha');
 
-  // Lee A:O desde la fila 2 (encabezados en la 1)
   const lastRow = src.getLastRow();
   if (lastRow < 2) return; // sin datos
-  const data = src.getRange(2, 1, lastRow - 1, 15).getValues(); // A..O (15 cols)
 
-  const normalizedData = data.map(row =>
-    row.map((value, idx) => {
-      if (idx === 12) return toBool_(value); // Columna M (Rep x Unidad)
-      return value === false ? '' : value;   // trata FALSE de otros checkboxes como vacío
-    })
-  );
+  const width = Math.min(15, src.getLastColumn());
+  const srcHeaders = src.getRange(1, 1, 1, width).getDisplayValues()[0];
+  const idIdx = _findHeaderIndex_(srcHeaders, ORDER_ID_HEADER_CANDIDATES);
+  const discIdx = _findHeaderIndex_(srcHeaders, DISK_HEADER_CANDIDATES);
+  const repIdx = _findHeaderIndex_(srcHeaders, REPAIR_FLAG_HEADER_CANDIDATES);
 
-  // Mantén SOLO filas donde exista ID Orden (col C = índice 2)
-  const rows = normalizedData
-    .filter(r => String(r[2] || '').trim() !== '') // requisito: ID Orden no vacío
-    .map(r => [
-      fecha,   // A Fecha
-      r[0],    // B Tecnico
-      r[1],    // C Cliente
-      r[2],    // D ID Orden
-      r[3],    // E M
-      r[4],    // F N
-      r[5],    // G 3/4
-      r[6],    // H Disco
-      r[7],    // I FR
-      r[8],    // J Dx
-      r[9],
-      r[10],   // K Unidades (omitimos J Puente)
-      r[11],   // L C.R
-      r[12],   // M Rep x Unidad (booleano)
-      r[13],   // N Estado
-      r[14]    // O Motivo de la rep
-    ]);
+  const dataRange = src.getRange(2, 1, lastRow - 1, width);
+  const values = dataRange.getValues();
+  const displayValues = dataRange.getDisplayValues();
 
-  if (rows.length === 0) return; // no hay filas válidas
-
-  // Abre destino
   const tss = SpreadsheetApp.openById(TARGET_SPREADSHEET_ID);
   const tgt = tss.getSheetByName('Historial');
   if (!tgt) throw new Error('No existe la hoja "Historial" en el archivo destino');
 
-  // Pega al final
-  const startRow = tgt.getLastRow() + 1;
-  tgt.getRange(startRow, 1, rows.length, 16).setValues(rows);
+  let firstInsertedRow = null;
 
-  // Formato de fecha y marca visual de la PRIMERA fila pegada (separador del día)
-  tgt.getRange(startRow, 1, rows.length, 1).setNumberFormat('yyyy-mm-dd');
-  tgt.getRange(startRow, 1, 1, 15).setBackground('#FFF3CD'); // amarillo suave
-  tgt.getRange(startRow, 1).setFontWeight('bold');            // fecha en negritas
+  for (let i = 0; i < values.length; i++) {
+    const orderId = displayValues[i][idIdx];
+    if (String(orderId || '').trim() === '') continue;
+
+    const disco = displayValues[i][discIdx];
+    const isRepair = _normalizeBool_(displayValues[i][repIdx]);
+
+    const normalizedRow = [];
+    for (let c = 0; c < 15; c++) {
+      if (c >= values[i].length) {
+        normalizedRow[c] = '';
+        continue;
+      }
+      const value = values[i][c];
+      if (c === repIdx) {
+        normalizedRow[c] = toBool_(value);
+      } else {
+        normalizedRow[c] = value === false ? '' : value;
+      }
+    }
+
+    const rowForHist = [
+      fecha,
+      normalizedRow[0],
+      normalizedRow[1],
+      normalizedRow[2],
+      normalizedRow[3],
+      normalizedRow[4],
+      normalizedRow[5],
+      normalizedRow[6],
+      normalizedRow[7],
+      normalizedRow[8],
+      normalizedRow[9],
+      normalizedRow[10],
+      normalizedRow[11],
+      normalizedRow[12],
+      normalizedRow[13],
+      normalizedRow[14]
+    ];
+
+    const inserted = enviarFilaAlHistorial_(src, i + 2, {
+      histSheet: tgt,
+      rowValues: rowForHist,
+      orderId,
+      disco,
+      isRepair
+    });
+
+    if (!inserted) {
+      continue;
+    }
+
+    const newRowIndex = tgt.getLastRow();
+    tgt.getRange(newRowIndex, 1).setNumberFormat('yyyy-mm-dd');
+
+    if (firstInsertedRow === null) {
+      firstInsertedRow = newRowIndex;
+      tgt.getRange(newRowIndex, 1).setFontWeight('bold');
+      tgt.getRange(newRowIndex, 1, 1, 15).setBackground('#FFF3CD');
+    }
+
+    if (isRepair) {
+      colorLastRowIfRepair_(tgt);
+    }
+  }
 }
 
 
