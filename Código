@@ -309,11 +309,11 @@ function enviarFilaAlHistorial_(sourceSheet, rowNumber, params) {
 
 function moverRegistroAHistorial() {
   const ss = SpreadsheetApp.getActive();
-  const src = ss.getSheetByName('registro');
-  if (!src) throw new Error('No existe la hoja "Registro de fresado"');
+  const src = ss.getSheetByName(SOURCE_SHEET_NAME); // 'registro'
+  if (!src) throw new Error('No existe la hoja "' + SOURCE_SHEET_NAME + '"');
 
-  const fecha = src.getRange('R1').getValue();
-  if (!fecha) throw new Error('La celda R2 no tiene fecha');
+  const fecha = src.getRange(DATE_CELL).getValue();
+  if (!fecha) throw new Error('La celda ' + DATE_CELL + ' no tiene fecha');
 
   const lastRow = src.getLastRow();
   if (lastRow < 2) return; // sin datos
@@ -329,8 +329,8 @@ function moverRegistroAHistorial() {
   const displayValues = dataRange.getDisplayValues();
 
   const tss = SpreadsheetApp.openById(TARGET_SPREADSHEET_ID);
-  const tgt = tss.getSheetByName('Historial');
-  if (!tgt) throw new Error('No existe la hoja "Historial" en el archivo destino');
+  const tgt = tss.getSheetByName(TARGET_SHEET_NAME);
+  if (!tgt) throw new Error('No existe la hoja "' + TARGET_SHEET_NAME + '" en el archivo destino');
 
   let firstInsertedRow = null;
 
@@ -343,36 +343,11 @@ function moverRegistroAHistorial() {
 
     const normalizedRow = [];
     for (let c = 0; c < 15; c++) {
-      if (c >= values[i].length) {
-        normalizedRow[c] = '';
-        continue;
-      }
-      const value = values[i][c];
-      if (c === repIdx) {
-        normalizedRow[c] = toBool_(value);
-      } else {
-        normalizedRow[c] = value === false ? '' : value;
-      }
+      const value = c < values[i].length ? values[i][c] : '';
+      normalizedRow[c] = (c === repIdx) ? toBool_(value) : (value === false ? '' : value);
     }
 
-    const rowForHist = [
-      fecha,
-      normalizedRow[0],
-      normalizedRow[1],
-      normalizedRow[2],
-      normalizedRow[3],
-      normalizedRow[4],
-      normalizedRow[5],
-      normalizedRow[6],
-      normalizedRow[7],
-      normalizedRow[8],
-      normalizedRow[9],
-      normalizedRow[10],
-      normalizedRow[11],
-      normalizedRow[12],
-      normalizedRow[13],
-      normalizedRow[14]
-    ];
+    const rowForHist = [fecha, ...normalizedRow.slice(0, 15)];
 
     const inserted = enviarFilaAlHistorial_(src, i + 2, {
       histSheet: tgt,
@@ -406,8 +381,7 @@ function moverRegistroAHistorial() {
  * (Opcional) Agrega un menú para ejecutar desde el menú
  */
 function onOpen() {
-  try { setupRepXUnidadCheckbox_(); } catch (e) {}
-
+  try { setupRepXUnidadCheckbox_(); } catch (e) { Logger.log(e); }
   SpreadsheetApp.getUi()
     .createMenu('Registro → Historial')
     .addItem('Guardar día en Historial', 'moverRegistroAHistorial')
@@ -490,6 +464,37 @@ function normalizeTrueFalseColumn_(sheet, letter) {
     return [b];
   });
   rng.setValues(vals);
+}
+
+function setupRepXUnidadCheckbox_() {
+  const ss = SpreadsheetApp.getActive();
+  const master = SpreadsheetApp.openById(MASTER_SPREADSHEET_ID);
+
+  // Hojas candidatas donde aplicar checkboxes
+  const sheetsToTouch = [];
+
+  // 1) Hoja local (secretaria)
+  const localSec = ss.getSheetByName(SECRETARY_SHEET_NAME);
+  if (localSec) sheetsToTouch.push(localSec);
+
+  // 2) Hoja Orders en el maestro
+  const orders = master.getSheetByName(MASTER_SHEET_NAME);
+  if (orders) sheetsToTouch.push(orders);
+
+  // 3) 'registro' si existe (local o en maestro)
+  const registroLocal  = ss.getSheetByName('registro');
+  const registroMaster = master.getSheetByName('registro');
+  [registroLocal, registroMaster].forEach(sh => { if (sh) sheetsToTouch.push(sh); });
+
+  // Aplica en columnas K, M y N
+  const letters = ['K', 'M', 'N'];
+
+  sheetsToTouch.forEach(sh => {
+    letters.forEach(letter => {
+      ensureCheckboxColumnByLetter_(sh, letter);
+      normalizeTrueFalseColumn_(sh, letter);
+    });
+  });
 }
 
 /** Pone checkbox en la columna M (desde fila 2) de la hoja ACTIVA */
