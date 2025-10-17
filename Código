@@ -374,23 +374,16 @@ function normalizeTrueFalseColumn_(sheet, letter) {
   rng.setValues(vals);
 }
 
-/** Ejecuta en ambas hojas: captura y destino (y BaseDento si existe) */
-function setupRepXUnidadCheckbox_() {
-  const ss = SpreadsheetApp.getActive();
-  ensureCheckboxColumnByLetter_(ss.getSheetByName(SECRETARY_SHEET_NAME), 'M');
-  normalizeTrueFalseColumn_(ss.getSheetByName(SECRETARY_SHEET_NAME), 'M');
+/** Pone checkbox en la columna M (desde fila 2) de la hoja ACTIVA */
+function makeColumnMCheckbox() {
+  const sheet = SpreadsheetApp.getActiveSheet();
+  const lastRow = Math.max(2, sheet.getMaxRows());
+  const range = sheet.getRange(2, 13, lastRow - 1, 1); // col 13 = M
 
-  const master = SpreadsheetApp.openById(MASTER_SPREADSHEET_ID);
-  const orders = master.getSheetByName(MASTER_SHEET_NAME);
-  ensureCheckboxColumnByLetter_(orders, 'M');
-  normalizeTrueFalseColumn_(orders, 'M');
+  const rule = SpreadsheetApp.newDataValidation()
+    .requireCheckbox()
+    .setAllowInvalid(false)
+    .build();
 
-  const baseDento = master.getSheetByName('BaseDento'); // opcional
-  if (baseDento) {
-    ensureCheckboxColumnByLetter_(baseDento, 'M');
-    normalizeTrueFalseColumn_(baseDento, 'M');
-  }
+  range.setDataValidation(rule);
 }
-
-
-
