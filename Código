@@ -269,6 +269,7 @@ const REPAIR_FLAG_HEADER_CANDIDATES = [
   'rep x. unidad','Rep x. unidad','Rep x Unidad','RepXUnidad','Rep por unidad',
   'rep x unidad','reparacion','reparación','es reparacion','es reparación'
 ];
+const UNIDADES_HEADER_CANDIDATES = ['Unidades'];
 
 /** NUEVO: Cabeceras aceptadas para el "Código de fresado" (columna Q) */
 const CODIGO_FRESADO_HEADER_CANDIDATES = [
@@ -301,18 +302,19 @@ function _normalizeBool_(v) {
   return s === 'true' || s === 'sí' || s === 'si' || s === '1' || s === 'x';
 }
 
-/** NUEVO: Llave triple ID + Disco + Código de fresado */
-function _historyKey_(orderId, disco, codigoFresado) {
+/** NUEVO: Llave cuádruple ID + Disco + Código de fresado + Unidades */
+function _historyKey_(orderId, disco, codigoFresado, unidades) {
   return [
     String(orderId).trim(),
     String(disco).trim(),
-    String(codigoFresado).trim()
+    String(codigoFresado).trim(),
+    String(unidades).trim()
   ].join('||').toLowerCase();
 }
 
-/** REEMPLAZADO: ahora compara los 3 campos */
-function existsInHistory_(histSheet, orderId, disco, codigoFresado) {
-  if (!orderId || !disco || !codigoFresado) return false;
+/** REEMPLAZADO: ahora compara los 4 campos */
+function existsInHistory_(histSheet, orderId, disco, codigoFresado, unidades) {
+  if (orderId == null || disco == null || codigoFresado == null || unidades == null) return false;
   const rng = histSheet.getDataRange().getDisplayValues();
   if (rng.length <= 1) return false; // solo cabecera
 
@@ -320,11 +322,12 @@ function existsInHistory_(histSheet, orderId, disco, codigoFresado) {
   const idIdx   = _findHeaderIndex_(headers, ORDER_ID_HEADER_CANDIDATES);
   const discIdx = _findHeaderIndex_(headers, DISK_HEADER_CANDIDATES);
   const codeIdx = _findHeaderIndex_(headers, CODIGO_FRESADO_HEADER_CANDIDATES);
+  const unidadesIdx = _findHeaderIndex_(headers, UNIDADES_HEADER_CANDIDATES);
 
-  const wanted  = _historyKey_(orderId, disco, codigoFresado);
+  const wanted  = _historyKey_(orderId, disco, codigoFresado, unidades);
 
   for (let r = 1; r < rng.length; r++) {
-    const k = _historyKey_(rng[r][idIdx], rng[r][discIdx], rng[r][codeIdx]);
+    const k = _historyKey_(rng[r][idIdx], rng[r][discIdx], rng[r][codeIdx], rng[r][unidadesIdx]);
     if (k === wanted) return true;
   }
   return false;
@@ -332,16 +335,16 @@ function existsInHistory_(histSheet, orderId, disco, codigoFresado) {
 
 /**
  * REEMPLAZADO: Devuelve true si se puede insertar.
- * Bloquea solo si ID + Disco + Código de fresado ya existen.
+ * Bloquea solo si ID + Disco + Código de fresado + Unidades ya existen.
  * (El flag de reparación queda para pintar, no para permitir duplicados).
  */
-function guardDuplicateOrRepair_(histSheet, orderId, disco, codigoFresado /*, isRepair */) {
+function guardDuplicateOrRepair_(histSheet, orderId, disco, codigoFresado, unidades /*, isRepair */) {
   const duplicated = existsInHistory_(
     SpreadsheetApp.openById(TARGET_SPREADSHEET_ID).getSheetByName(TARGET_SHEET_NAME),
-    orderId, disco, codigoFresado
+    orderId, disco, codigoFresado, unidades
   );
   if (duplicated) {
-    SpreadsheetApp.getActive().toast('Duplicado: ID + Disco + Código de fresado ya existen.', 'Duplicado', 5);
+    SpreadsheetApp.getActive().toast('Duplicado: ID + Disco + Código de fresado + Unidades ya existen.', 'Duplicado', 5);
     return false;
   }
   return true;
@@ -370,13 +373,14 @@ function enviarFilaAlHistorial_(sourceSheet, rowNumber, params) {
   const orderId       = params.orderId;
   const disco         = params.disco;
   const codigoFresado = params.codigoFresado; // NUEVO
+  const unidades      = params.unidades;
   const isRepair      = params.isRepair === true;
 
   if (!histSheet) throw new Error('No existe la hoja Historial');
   if (!rowValues) throw new Error('No hay datos para insertar');
 
-  // Ahora la guardia usa los 3 campos
-  if (!guardDuplicateOrRepair_(histSheet, orderId, disco, codigoFresado /*, isRepair*/)) {
+  // Ahora la guardia usa los 4 campos
+  if (!guardDuplicateOrRepair_(histSheet, orderId, disco, codigoFresado, unidades /*, isRepair*/)) {
     return false;
   }
 
@@ -427,6 +431,7 @@ function moverRegistroAHistorial() {
   const discIdx = _findHeaderIndex_(srcHeaders, DISK_HEADER_CANDIDATES);
   const repIdx  = _findHeaderIndex_(srcHeaders, REPAIR_FLAG_HEADER_CANDIDATES);
   const codIdx  = _findHeaderIndex_(srcHeaders, CODIGO_FRESADO_HEADER_CANDIDATES); // NUEVO
+  const unidadesIdx = _findHeaderIndex_(srcHeaders, UNIDADES_HEADER_CANDIDATES);
 
   const dataRange    = src.getRange(2, 1, lastRow - 1, width);
   const values       = dataRange.getValues();
@@ -444,6 +449,7 @@ function moverRegistroAHistorial() {
 
     const disco         = displayVals[i][discIdx];
     const codigoFresado = displayVals[i][codIdx];  // NUEVO
+    const unidades      = displayVals[i][unidadesIdx];
     const isRepair      = _normalizeBool_(displayVals[i][repIdx]);
 
     const normalized = [];
@@ -461,6 +467,7 @@ function moverRegistroAHistorial() {
       orderId,
       disco,
       codigoFresado, // NUEVO
+      unidades,
       isRepair
     });
     if (!inserted) continue;
