@@ -1,4 +1,4 @@
-/**
+ /**
  * Aplica un dropdown (KARLA, ITZEL, ALAN) a las columnas "Tecnico" y "Dx".
  * - Detecta las columnas por el encabezado en la fila 1.
  * - Aplica la validación desde la fila 2 hasta el final de la hoja.
@@ -10,7 +10,7 @@ function setDropdownTecnicoDx() {
   
   // Encabezados a buscar (tal cual aparecen en la fila 1)
   const HEADERS = ['Tecnico', 'Dx'];
-  const options = ['KARLA', 'ITZEL', 'ALAN'];
+  const options = ['KARLA', 'ITZEL', 'ALAN','STL'];
 
   // Leer encabezados de la fila 1
   const lastCol = sheet.getLastColumn();
@@ -53,7 +53,7 @@ function onEdit(e) {
   try {
     const range = e.range;
     const sheet = range.getSheet();
-    if (range.getColumn() !== 3) return;      // Solo columna C
+    if (range.getColumn() !== 4) return;      // Solo columna D
     if (range.getRow() < 1) return;           // Evita encabezados
     const val = e.value;                       // Solo funciona en edición de una celda
     if (val == null) return;
@@ -101,6 +101,7 @@ function formatearColumnaC_enLote() {
   rng.setNumberFormat('@');
   rng.setValues(values);
 }
+
 function setDropdownColumnaD() {
   const ss = SpreadsheetApp.getActive();
   const sheet = ss.getActiveSheet(); // o ss.getSheetByName('NOMBRE_DE_TU_HOJA')
@@ -122,9 +123,10 @@ function setDropdownColumnaD() {
   // (Opcional) Dejar en blanco todo para que quede como default vacío:
   // range.clearContent();
 }
+
 function setDropdownColumnaM() {
   const ss = SpreadsheetApp.getActive();
-  const sheet = ss.getActiveSheet(); // o ss.getSheetByName('NOMBRE_DE_TU_HOJA')
+  const sheet = ss.getActiveSheet(); // o ss.getSheetByName('NOMBRE-DE-TU_HOJA')
 
   const col = 13;            // Columna M
   const startRow = 2;        // debajo de encabezados
@@ -160,9 +162,10 @@ function setDropdownColumnaM() {
   filtered.push(listoRule);
   sheet.setConditionalFormatRules(filtered);
 }
+
 function setCheckboxColumnaL() {
   const ss = SpreadsheetApp.getActive();
-  const sheet = ss.getActiveSheet();            // o ss.getSheetByName('NOMBRE_DE_TU_HOJA')
+  const sheet = ss.getActiveSheet();            // o ss.getSheetByName('NOMBRE-DE-TU_HOJA')
 
   const col = 12;                               // Columna L
   const startRow = 2;                           // debajo del encabezado
@@ -187,30 +190,73 @@ function setDropdownFromOtherSheet() {
   const registroFile = SpreadsheetApp.getActiveSpreadsheet();
   const registroSheet = registroFile.getSheetByName("Registro");
 
+  if (!registroSheet) {
+    Logger.log("Error: No se encontró la hoja 'Registro' en el archivo activo.");
+    return;
+  }
+
   // ID del archivo donde están los nombres
   const inventarioFileId = "1QjXhK5ngOglIgfaESwZDJmBLrhlVeXPkWnf7twFzBQ4";
-  const inventarioFile = SpreadsheetApp.openById(inventarioFileId);
+  let inventarioFile;
+  try {
+    inventarioFile = SpreadsheetApp.openById(inventarioFileId);
+  } catch (e) {
+    Logger.log(`Error al abrir el archivo de Inventario por ID (${inventarioFileId}): ${e}`);
+    return;
+  }
+  
   const inventarioSheet = inventarioFile.getSheetByName("Inventario");
+  if (!inventarioSheet) {
+    Logger.log("Error: No se encontró la hoja 'Inventario' en el archivo de destino.");
+    return;
+  }
 
-  // Obtiene los nombres de la columna B (omite encabezado)
-  const data = inventarioSheet.getRange("B2:B").getValues().filter(String);
+  // 🔹 Obtiene los datos desde la Columna B (Discos) hasta la H (Estado)
+  const inventarioLastRow = inventarioSheet.getLastRow();
+  if (inventarioLastRow < 2) {
+    Logger.log("No hay datos para procesar en la hoja 'Inventario'.");
+    return;
+  }
+
+  // 🔹 Obtenemos el rango B2:H<ultima_fila>
+  // Col B = índice 0 (Disco)
+  // Col H = índice 6 (Estado)
+  const dataRange = inventarioSheet.getRange(`B2:H${inventarioLastRow}`).getValues();
+
+  // Filtra los datos basado en la condición (estado en columna H)
+  const filteredDiskList = dataRange.filter(row => {
+    const diskName = row[0]; // Valor de la Columna B
+    const status   = row[6]; // Valor de la Columna H
+    
+    // Incluir solo si el nombre del disco no está vacío Y el estado cumple la condición
+    return diskName !== "" && (status === "Entregado" || status === "Otro");
+  }).map(row => row[0]); // Extrae solo el nombre del disco (Col B) de las filas filtradas
+
+  
+  if (filteredDiskList.length === 0) {
+    Logger.log("No se encontraron discos que cumplan con la condición 'Entregado' u 'Otro'. Es posible que el dropdown aparezca vacío.");
+    // Opcionalmente, puedes limpiar validaciones existentes
+    // const lastRow = registroSheet.getMaxRows();
+    // registroSheet.getRange(`H2:H${lastRow}`).clearDataValidations();
+    // return;
+  }
 
   // Crea la regla de validación
   const rule = SpreadsheetApp.newDataValidation()
-    .requireValueInList(data.flat(), true)
+    .requireValueInList(filteredDiskList, true) // Usa la lista ya filtrada y aplanada
     .setAllowInvalid(false)
     .build();
 
-  // Aplica la validación a toda la columna G (desde la fila 2 en adelante)
+  // Aplica la validación a toda la columna H (desde la fila 2 en adelante)
   const lastRow = registroSheet.getMaxRows();
-  registroSheet.getRange(`G2:G${lastRow}`).setDataValidation(rule);
+  registroSheet.getRange(`H2:H${lastRow}`).setDataValidation(rule);
 
-  Logger.log("Dropdown aplicado correctamente");
+  Logger.log("Dropdown aplicado correctamente con filtro de estado (columna H).");
 }
 
 /**** CONFIG (SOLO DOS ARCHIVOS) ****/
 const SOURCE_SHEET_NAME = 'registro';           // hoja fuente en "Registro de fresado"
-const DATE_CELL = 'R1';                         // celda de fecha en la hoja fuente
+const DATE_CELL = 'S1';                         // celda de fecha en la hoja fuente
 
 // Archivo destino: "Inventario Zirconia"
 const TARGET_SPREADSHEET_ID = '1QjXhK5ngOglIgfaESwZDJmBLrhlVeXPkWnf7twFzBQ4';
@@ -222,6 +268,11 @@ const DISK_HEADER_CANDIDATES     = ['Disco', 'Disco/Modelo', 'Producto', 'Trabaj
 const REPAIR_FLAG_HEADER_CANDIDATES = [
   'rep x. unidad','Rep x. unidad','Rep x Unidad','RepXUnidad','Rep por unidad',
   'rep x unidad','reparacion','reparación','es reparacion','es reparación'
+];
+
+/** NUEVO: Cabeceras aceptadas para el "Código de fresado" (columna Q) */
+const CODIGO_FRESADO_HEADER_CANDIDATES = [
+  'Código de fresado','Codigo de fresado','Código','Codigo','Cód. fresado','Cod fresado','Cód','Cod'
 ];
 
 function _normalizeHeader_(s) {
@@ -250,35 +301,47 @@ function _normalizeBool_(v) {
   return s === 'true' || s === 'sí' || s === 'si' || s === '1' || s === 'x';
 }
 
-function _historyKey_(orderId, disco) {
-  return (String(orderId).trim() + '||' + String(disco).trim()).toLowerCase();
+/** NUEVO: Llave triple ID + Disco + Código de fresado */
+function _historyKey_(orderId, disco, codigoFresado) {
+  return [
+    String(orderId).trim(),
+    String(disco).trim(),
+    String(codigoFresado).trim()
+  ].join('||').toLowerCase();
 }
 
-function existsInHistory_(histSheet, orderId, disco) {
-  if (!orderId || !disco) return false;
+/** REEMPLAZADO: ahora compara los 3 campos */
+function existsInHistory_(histSheet, orderId, disco, codigoFresado) {
+  if (!orderId || !disco || !codigoFresado) return false;
   const rng = histSheet.getDataRange().getDisplayValues();
   if (rng.length <= 1) return false; // solo cabecera
 
   const headers = rng[0];
   const idIdx   = _findHeaderIndex_(headers, ORDER_ID_HEADER_CANDIDATES);
   const discIdx = _findHeaderIndex_(headers, DISK_HEADER_CANDIDATES);
-  const wanted  = _historyKey_(orderId, disco);
+  const codeIdx = _findHeaderIndex_(headers, CODIGO_FRESADO_HEADER_CANDIDATES);
+
+  const wanted  = _historyKey_(orderId, disco, codigoFresado);
 
   for (let r = 1; r < rng.length; r++) {
-    const k = _historyKey_(rng[r][idIdx], rng[r][discIdx]);
+    const k = _historyKey_(rng[r][idIdx], rng[r][discIdx], rng[r][codeIdx]);
     if (k === wanted) return true;
   }
   return false;
 }
 
 /**
- * Devuelve true si se puede insertar (nuevo o reparación).
- * Si es duplicado y NO es reparación, muestra toast y devuelve false.
+ * REEMPLAZADO: Devuelve true si se puede insertar.
+ * Bloquea solo si ID + Disco + Código de fresado ya existen.
+ * (El flag de reparación queda para pintar, no para permitir duplicados).
  */
-function guardDuplicateOrRepair_(histSheet, orderId, disco, isRepair) {
-  const duplicated = existsInHistory_(histSheet, orderId, disco);
-  if (duplicated && !isRepair) {
-    SpreadsheetApp.getActive().toast('La orden ya está registrada, por favor verifique', 'Duplicado', 5);
+function guardDuplicateOrRepair_(histSheet, orderId, disco, codigoFresado /*, isRepair */) {
+  const duplicated = existsInHistory_(
+    SpreadsheetApp.openById(TARGET_SPREADSHEET_ID).getSheetByName(TARGET_SHEET_NAME),
+    orderId, disco, codigoFresado
+  );
+  if (duplicated) {
+    SpreadsheetApp.getActive().toast('Duplicado: ID + Disco + Código de fresado ya existen.', 'Duplicado', 5);
     return false;
   }
   return true;
@@ -302,24 +365,51 @@ function colorLastRowIfRepair_(histSheet) {
 
 function enviarFilaAlHistorial_(sourceSheet, rowNumber, params) {
   params = params || {};
-  const histSheet = params.histSheet;
-  const rowValues = params.rowValues;
-  const orderId = params.orderId;
-  const disco = params.disco;
-  const isRepair = params.isRepair === true;
+  const histSheet     = params.histSheet;
+  const rowValues     = params.rowValues;
+  const orderId       = params.orderId;
+  const disco         = params.disco;
+  const codigoFresado = params.codigoFresado; // NUEVO
+  const isRepair      = params.isRepair === true;
 
   if (!histSheet) throw new Error('No existe la hoja Historial');
   if (!rowValues) throw new Error('No hay datos para insertar');
 
-  if (!guardDuplicateOrRepair_(histSheet, orderId, disco, isRepair)) {
+  // Ahora la guardia usa los 3 campos
+  if (!guardDuplicateOrRepair_(histSheet, orderId, disco, codigoFresado /*, isRepair*/)) {
     return false;
   }
 
-  histSheet.appendRow(rowValues);
+  // === reemplazo de appendRow ===
+  const FIRST_DATA_ROW = 2;
+
+  // Detecta la columna clave por encabezado (ID/ID Orden/ORD-####)
+  const tgtHeaders = histSheet.getRange(1, 1, 1, histSheet.getLastColumn()).getDisplayValues()[0];
+  const keyColIdx1Based = _findHeaderIndex_(tgtHeaders, ORDER_ID_HEADER_CANDIDATES) + 1;
+
+  // Lee la columna clave desde fila 2 hasta el final físico de la hoja
+  const totalRows = histSheet.getMaxRows();
+  const numRows = Math.max(0, totalRows - FIRST_DATA_ROW + 1);
+  const keyColRange = numRows > 0 ? histSheet.getRange(FIRST_DATA_ROW, keyColIdx1Based, numRows, 1) : null;
+  const keyColValues = keyColRange ? keyColRange.getValues() : [];
+
+  // Busca la última fila realmente ocupada (no vacío)
+  let lastDataIndex = -1;
+  for (let i = keyColValues.length - 1; i >= 0; i--) {
+    const v = keyColValues[i][0];
+    if (v !== '' && v !== null) { lastDataIndex = i; break; }
+  }
+  const nextRow = (lastDataIndex === -1) ? FIRST_DATA_ROW : (FIRST_DATA_ROW + lastDataIndex + 1);
+
+  // Escribe la fila en A:...
+  histSheet.getRange(nextRow, 1, 1, rowValues.length).setValues([rowValues]);
+  // === fin reemplazo ===
+
   return true;
 }
 
 function moverRegistroAHistorial() {
+
   const ss  = SpreadsheetApp.getActive();
   const src = ss.getSheetByName(SOURCE_SHEET_NAME);
   if (!src) throw new Error('No existe la hoja "' + SOURCE_SHEET_NAME + '"');
@@ -336,6 +426,7 @@ function moverRegistroAHistorial() {
   const idIdx   = _findHeaderIndex_(srcHeaders, ORDER_ID_HEADER_CANDIDATES);
   const discIdx = _findHeaderIndex_(srcHeaders, DISK_HEADER_CANDIDATES);
   const repIdx  = _findHeaderIndex_(srcHeaders, REPAIR_FLAG_HEADER_CANDIDATES);
+  const codIdx  = _findHeaderIndex_(srcHeaders, CODIGO_FRESADO_HEADER_CANDIDATES); // NUEVO
 
   const dataRange    = src.getRange(2, 1, lastRow - 1, width);
   const values       = dataRange.getValues();
@@ -351,8 +442,9 @@ function moverRegistroAHistorial() {
     const orderId  = displayVals[i][idIdx];
     if (String(orderId || '').trim() === '') continue;
 
-    const disco    = displayVals[i][discIdx];
-    const isRepair = _normalizeBool_(displayVals[i][repIdx]);
+    const disco         = displayVals[i][discIdx];
+    const codigoFresado = displayVals[i][codIdx];  // NUEVO
+    const isRepair      = _normalizeBool_(displayVals[i][repIdx]);
 
     const normalized = [];
     for (let c = 0; c < width; c++) {
@@ -361,13 +453,14 @@ function moverRegistroAHistorial() {
     }
 
     // Ajusta el slice según las columnas reales del Historial.
-    const rowForHist = [ fecha, ...normalized.slice(0, 15) ];
+    const rowForHist = [ fecha, ...normalized.slice(0, 17) ];
 
     const inserted = enviarFilaAlHistorial_(src, i + 2, {
       histSheet: tgt,
       rowValues: rowForHist,
       orderId,
       disco,
+      codigoFresado, // NUEVO
       isRepair
     });
     if (!inserted) continue;
@@ -383,6 +476,7 @@ function moverRegistroAHistorial() {
 
     if (isRepair) colorLastRowIfRepair_(tgt);
   }
+
 }
 
 
@@ -413,20 +507,35 @@ function limpiarRegistro() {
 function limpiarRegistro() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const sh = ss.getSheetByName('registro');
-  if (!sh) throw new Error('No se encontró la hoja "Registro de fresado"');
+  if (!sh) throw new Error('No se encontró la hoja "registro"');
 
-  const lastRow = sh.getLastRow();
-  const lastCol = sh.getLastColumn();
-
-  if (lastRow > 1) {
-    // Limpia contenido sin eliminar validaciones o formato
-    sh.getRange(2, 1, lastRow - 1, 16).clearContent();
+  // Ventana de advertencia/confirmación
+  const ui = SpreadsheetApp.getUi();
+  const titulo = '⚠️ Confirmar limpieza';
+  const mensaje = 'RECUERDA: Antes de limpiar se debe GUARDAR el REGISTRO y los TOTALES.\n\n'
+                + 'Si ya lo hiciste, presiona "OK" para continuar con la limpieza.\n'
+                + 'De lo contrario, presiona "Cancel".';
+  const respuesta = ui.alert(titulo, mensaje, ui.ButtonSet.OK_CANCEL);
+  if (respuesta !== ui.Button.OK) {
+    ui.alert('Operación cancelada. No se realizó ninguna limpieza.');
+    return;
   }
 
-  // Opcional: Limpia la fecha del día
-  sh.getRange('R2').clearContent();
+  const lastRow = sh.getLastRow();
+  const lastCol = sh.getLastColumn(); // por si lo necesitas más adelante
 
-  SpreadsheetApp.getUi().alert('✅ Registro limpiado correctamente.');
+  if (lastRow > 1) {
+    // Limpia contenido de A: P (1..16) sin afectar formato/validaciones
+    sh.getRange(2, 1, lastRow - 1, 16).clearContent();
+
+    // Limpia también la columna Q (17) desde la fila 2 hasta la última con datos
+    sh.getRange(2, 17, lastRow - 1, 1).clearContent();
+  }
+
+  // Opcional: Limpia la fecha del día en S2
+  sh.getRange('S2').clearContent();
+
+  ui.alert('✅ Registro limpiado correctamente.');
 }
 
 function toBool_(v) {
@@ -492,4 +601,61 @@ function makeColumnMCheckbox() {
     .build();
 
   range.setDataValidation(rule);
+}
+
+function colorLastRowIfRepair_(histSheet, rowIndex) {
+  const r = rowIndex || histSheet.getLastRow();
+  const lastCol = histSheet.getLastColumn();
+  if (r >= 2 && lastCol >= 1) {
+    histSheet.getRange(r, 1, 1, lastCol).setBackground('#FCE5CD');
+  }
+}
+
+function guardarTotalesSimpleRemoto() {
+  // Origen (este archivo)
+  const SRC_SHEET = 'registro';
+  const DATE_CELL = 'S1';
+  const VALUES_RANGE = 'T6:T16';
+
+  // Destino (otro archivo)
+  const DEST_FILE_ID = '1QjXhK5ngOglIgfaESwZDJmBLrhlVeXPkWnf7twFzBQ4';
+  const DEST_SHEET = 'Totales';
+
+  // Leer origen
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const src = ss.getSheetByName(SRC_SHEET);
+  if (!src) throw new Error('No existe la hoja origen: ' + SRC_SHEET);
+
+  const fecha = src.getRange(DATE_CELL).getValue();
+  const vals = src.getRange(VALUES_RANGE).getValues().map(r => r[0]); // [v1..v6]
+  const outRow = [fecha, ...vals];
+
+  // Abrir destino
+  const destFile = SpreadsheetApp.openById(DEST_FILE_ID);
+  const dst = destFile.getSheetByName(DEST_SHEET);
+  if (!dst) throw new Error('No existe la hoja destino: ' + DEST_SHEET);
+
+  // Siguiente fila simple (sin formatear nada)
+  const nextRow = Math.max(2, dst.getLastRow() + 1);
+  dst.getRange(nextRow, 1, 1, outRow.length).setValues([outRow]);
+}
+
+function dropdownP() {
+  const hoja = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+  const columna = hoja.getRange("P2:P"); // desde la fila 2 hasta el final
+  
+  // Crea una regla de validación tipo checkbox
+  const reglaCheckbox = SpreadsheetApp.newDataValidation()
+    .requireCheckbox()
+    .setAllowInvalid(false)
+    .build();
+
+  // Aplica la validación a toda la columna P desde la fila 2
+  columna.setDataValidation(reglaCheckbox);
+  
+  // Limpia los valores previos por si hay texto
+  columna.clearContent();
+
+  // Mensaje opcional en el registro de ejecución
+  Logger.log("Checklist creado correctamente en la columna P");
 }
